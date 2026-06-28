@@ -11,17 +11,20 @@ ETF 轮动选股器 — 云端版 (纯 Python, 无外部依赖)
 
 用法:
   python etf_rotation_cloud.py                  # 运行选股, 输出到终端
-  python etf_rotation_cloud.py --email TO@qq.com # 运行并发送邮件
+  python etf_rotation_cloud.py --smtp           # 运行并通过 SendGrid API 发邮件
 
-GitHub Actions 定时任务调用:
-  python etf_rotation_cloud.py --smtp
+环境变量 (GitHub Secrets):
+  SENDGRID_API_KEY  - SendGrid API 密钥 (推荐)
+  或
+  EMAIL_FROM        - QQ邮箱地址
+  EMAIL_PASSWORD    - QQ邮箱授权码
+  EMAIL_TO          - 收件邮箱
 """
 
 import json
 import math
 import smtplib
 import sys
-import time
 import urllib.request
 import os
 from datetime import datetime, timezone, timedelta
@@ -111,10 +114,7 @@ def fetch_klines(code, market, days=FETCH_DAYS):
 # ============================================================
 
 def linreg(x, y):
-    """
-    一元线性回归
-    返回: {slope, intercept}
-    """
+    """一元线性回归 返回: {slope, intercept}"""
     n = len(x)
     sx = sum(x)
     sy = sum(y)
@@ -131,16 +131,7 @@ def linreg(x, y):
 
 
 def calc_score(closes):
-    """
-    动量得分 = 年化收益率 * R²
-    步骤:
-      1. 取最近 N 个收盘价
-      2. y = ln(close), x = 0..N-1
-      3. 线性回归
-      4. annualRet = exp(slope * TRADING_DAYS) - 1
-      5. R² = 1 - SSres/SStot
-      6. score = annualRet * R²
-    """
+    """动量得分 = 年化收益率 * R²"""
     c = closes[-N:]
     y = [math.log(x) for x in c]
     x = list(range(N))
@@ -148,7 +139,6 @@ def calc_score(closes):
     reg = linreg(x, y)
     annual_ret = math.exp(reg["slope"] * TRADING_DAYS) - 1
 
-    # R²
     y_pred = [reg["slope"] * xi + reg["intercept"] for xi in x]
     y_mean = sum(y) / len(y)
     ss_res = sum((y[i] - y_pred[i]) ** 2 for i in range(len(y)))
@@ -159,10 +149,7 @@ def calc_score(closes):
 
 
 def calc_vol20(all_data):
-    """
-    计算 vol20: 各ETF最近21日年化波动率的均值
-    与原版 Scriptable calcVol20 一致
-    """
+    """计算 vol20: 各ETF最近21日年化波动率的均值"""
     vols = []
     for code in VOL_CORE_CODES:
         data = all_data.get(code)
@@ -187,10 +174,7 @@ def calc_vol20(all_data):
 # ============================================================
 
 def run():
-    """
-    执行选股, 返回结果字典.
-    与原版 Scriptable run() 一致.
-    """
+    """执行选股, 返回结果字典."""
     all_data = {}
     results = []
     newest_date = None
@@ -222,7 +206,6 @@ def run():
             "date": last_date,
         })
 
-    # 按得分降序排列
     results.sort(key=lambda r: r["score"], reverse=True)
 
     vol20 = calc_vol20(all_data)
@@ -244,11 +227,10 @@ def run():
 # ============================================================
 
 def format_report(data):
-    """生成文字报告 (与原版 showResult 风格一致)"""
+    """生成文字报告"""
     now = datetime.now(CN_TZ)
     time_str = now.strftime("%m-%d %H:%M")
 
-    # 数据过期检查
     data_warning = ""
     if data["newest_date"]:
         try:
@@ -260,17 +242,16 @@ def format_report(data):
             pass
 
     lines = []
-    lines.append(f"📊 ETF轮动选股报告  {time_str}")
+    lines.append(f"ETF轮动选股报告  {time_str}")
     lines.append("=" * 45)
 
-    # 排名
     for i, r in enumerate(data["results"]):
-        icon = ["🥇", "🥈", "🥉"][i] if i < 3 else "   "
+        icon = ["1", "2", "3"][i] if i < 3 else "  "
         score_str = f"{r['score']:.4f}" if r.get("valid", True) else "N/A"
-        lines.append(f"  {icon} {r['name']:　<8} {score_str}")
+        lines.append(f"  {icon} {r['name']: <8} {score_str}")
 
     lines.append("-" * 45)
-    lines.append(f"  vol20: {data['vol20']:.1f}%  {'⚠ 触发' if data['triggered'] else '正常'}")
+    lines.append(f"  vol20: {data['vol20']:.1f}%  {'触发' if data['triggered'] else '正常'}")
 
     if data["triggered"]:
         lines.append(f"  仓位: 半仓 {data['best']['name']} + 50% 逆回购")
@@ -295,7 +276,7 @@ def build_html_report(data):
 
     rows_html = ""
     for i, r in enumerate(data["results"]):
-        icon = ["🥇", "🥈", "🥉"][i] if i < 3 else "　"
+        icon = ["1", "2", "3"][i] if i < 3 else "  "
         cls = "rank-first" if i == 0 else ("rank-other" if i < 3 else "")
         score_str = f"{r['score']:.4f}" if r.get("valid", True) else "N/A"
         rows_html += f"""<tr class="{cls}">
@@ -305,8 +286,6 @@ def build_html_report(data):
           <td class="code">{r['code']}</td>
         </tr>"""
 
-    trigger_class = "trigger-yes" if data["triggered"] else "trigger-no"
-    trigger_text = "⚠ 触发降仓" if data["triggered"] else "正常"
     position_text = f"半仓 {data['best']['name']} + 50% 逆回购" if data["triggered"] else f"满仓 {data['best']['name']}"
 
     html = f"""<!DOCTYPE html>
@@ -327,51 +306,91 @@ table {{ width: 100%; border-collapse: collapse; font-size: 13px; background: #1
 th {{ background: #1c2128; color: #8b949e; font-weight: 500; padding: 8px 6px; text-align: left; border-bottom: 1px solid #30363d; }}
 td {{ padding: 8px 6px; border-bottom: 1px solid #21262d; }}
 tr:last-child td {{ border-bottom: none; }}
-.rank {{ width: 50px; text-align: center; }}
 .rank-first td {{ color: #f0883e; font-weight: 700; }}
 .name {{ font-weight: 600; }}
 .score {{ text-align: right; font-family: monospace; }}
 .code {{ text-align: right; color: #484f58; font-size: 11px; }}
 .card {{ background: #161b22; border-radius: 10px; padding: 12px; margin-bottom: 14px; border: 1px solid #30363d; }}
-.card-title {{ font-size: 12px; color: #8b949e; margin-bottom: 8px; }}
 .row {{ display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #21262d; }}
 .row:last-child {{ border-bottom: none; }}
 .label {{ color: #8b949e; }}
 .value {{ font-weight: 600; }}
-.{trigger_class} .value {{ color: {'#da3633' if data['triggered'] else '#3fb950'}; }}
 .footer {{ text-align: center; color: #484f58; font-size: 11px; margin-top: 20px; }}
 </style></head>
 <body><div class="container">
-<div class="header"><h1>📊 ETF 轮动选股</h1><div class="time">{time_str}</div></div>
+<div class="header"><h1>ETF 轮动选股</h1><div class="time">{time_str}</div></div>
 <div class="signal {'caution' if data['triggered'] else 'buy'}">
 <div class="action">{position_text}</div>
-<div class="detail">vol20: {data['vol20']:.1f}% | {trigger_text}</div>
+<div class="detail">vol20: {data['vol20']:.1f}%</div>
 </div>
 <table><tr><th></th><th>ETF</th><th style="text-align:right">得分</th><th style="text-align:right">代码</th></tr>
 {rows_html}
 </table>
 <div class="card">
-<div class="card-title">📋 风控指标</div>
+<div class="card-title">风控指标</div>
 <div class="row"><span class="label">vol20 (20日年化波动)</span><span class="value" style="color:{'#da3633' if data['triggered'] else '#3fb950'}">{data['vol20']:.1f}%</span></div>
 <div class="row"><span class="label">阈值</span><span class="value">{VOL_THRESHOLD}%</span></div>
 <div class="row"><span class="label">仓位</span><span class="value" style="color:{'#d29922' if data['triggered'] else '#3fb950'}">{'半仓' if data['triggered'] else '满仓'}</span></div>
 </div>
 <div class="card">
-<div class="card-title">📌 操作提示</div>
+<div class="card-title">操作提示</div>
 <div class="row"><span class="label">执行时间</span><span class="value">明日 09:30</span></div>
 <div class="row"><span class="label">若降仓</span><span class="value">14:50 前买 GC001/R-001</span></div>
 </div>
-<div class="footer">数据来源: 新浪财经 | 策略: ETF轮动 v5 (4源vol + 阈值{VOL_THRESHOLD}% + 降仓50% + 逆回购)</div>
+<div class="footer">数据来源: 新浪财经 | ETF轮动 v5</div>
 </div></body></html>"""
     return html
 
 
 # ============================================================
-# 邮件发送 (QQ邮箱 SMTP) — 修复版
+# 邮件发送 — SendGrid API (推荐，GitHub Actions 兼容)
 # ============================================================
 
-def send_email(text_body, html_body, to_addr, from_addr, password):
-    """通过 QQ邮箱 SMTP 发送邮件（支持 SSL 和 STARTTLS 两种方式）"""
+def send_via_sendgrid(html_body, text_body, to_addr, api_key):
+    """通过 SendGrid Web API 发送邮件 (无需额外依赖)"""
+    subject = f"ETF轮动选股报告 {datetime.now(CN_TZ).strftime('%m-%d')}"
+
+    data = json.dumps({
+        "personalizations": [{"to": [{"email": to_addr}]}],
+        "from": {"email": "etf-rotation@example.com", "name": "ETF轮动选股器"},
+        "subject": subject,
+        "content": [
+            {"type": "text/plain", "value": text_body},
+            {"type": "text/html", "value": html_body},
+        ]
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.sendgrid.com/v3/mail/send",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status == 202:
+                print(f"  [OK] SendGrid: 邮件已发送至 {to_addr}")
+                return True
+            else:
+                print(f"  [X] SendGrid: 返回 {resp.status}")
+                return False
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"  [X] SendGrid 错误 ({e.code}): {body[:200]}")
+        return False
+    except Exception as e:
+        print(f"  [X] SendGrid 异常: {e}")
+        return False
+
+
+# ============================================================
+# 邮件发送 — QQ邮箱 SMTP (备用)
+# ============================================================
+
+def send_via_qq_smtp(html_body, text_body, to_addr, from_addr, password):
+    """通过 QQ邮箱 SMTP 发送邮件"""
     subject = f"ETF轮动选股报告 {datetime.now(CN_TZ).strftime('%m-%d')}"
 
     msg = MIMEText(html_body, "html", "utf-8")
@@ -379,21 +398,19 @@ def send_email(text_body, html_body, to_addr, from_addr, password):
     msg["From"] = formataddr(("ETF轮动选股器", from_addr))
     msg["To"] = to_addr
 
-    # 检查邮箱格式
     if "@" not in from_addr:
         print(f"  [X] EMAIL_FROM 格式错误: {from_addr}")
-        print(f"      应该是完整的邮箱地址如 xxx@qq.com")
         return False
 
-    # 依次尝试 SSL(465) 和 STARTTLS(587)
     methods = [
-        ("smtp.qq.com", 465, True,  "SSL"),
-        ("smtp.qq.com", 587, False, "STARTTLS"),
+        ("smtp.qq.com", 465, True),
+        ("smtp.qq.com", 587, False),
     ]
 
-    for host, port, use_ssl, mode in methods:
+    for host, port, use_ssl in methods:
+        mode = "SSL" if use_ssl else "STARTTLS"
         try:
-            print(f"  [*] 尝试 QQ邮箱 {mode} ({host}:{port})...")
+            print(f"  [*] QQ邮箱 {mode} ({host}:{port})...")
             if use_ssl:
                 server = smtplib.SMTP_SSL(host, port, timeout=30)
             else:
@@ -405,26 +422,44 @@ def send_email(text_body, html_body, to_addr, from_addr, password):
             server.login(from_addr, password)
             server.sendmail(from_addr, [to_addr], msg.as_string())
             server.quit()
-            print(f"  [OK] ✅ 邮件已成功发送至 {to_addr}")
+            print(f"  [OK] QQ邮箱: 已发送至 {to_addr}")
+            return True
+        except smtplib.SMTPAuthenticationError:
+            print(f"  [X] QQ邮箱 认证失败! 请检查授权码")
+            return False
+        except Exception as e:
+            print(f"  [X] QQ邮箱 {mode} 失败: {e}")
+            continue
+
+    return False
+
+
+# ============================================================
+# 邮件发送 — 统一入口
+# ============================================================
+
+def send_email(text_body, html_body):
+    """智能选择邮件发送方式"""
+    # 优先使用 SendGrid
+    api_key = os.environ.get("SENDGRID_API_KEY", "")
+    if api_key:
+        print("[*] 使用 SendGrid API 发件...")
+        to_addr = os.environ.get("EMAIL_TO", "")
+        if to_addr and send_via_sendgrid(html_body, text_body, to_addr, api_key):
             return True
 
-        except smtplib.SMTPAuthenticationError:
-            print(f"  [X] ❌ 认证失败！邮箱或授权码错误")
-            print(f"      提示: QQ邮箱必须用『授权码』（16位），不是登录密码")
-            print(f"      去 https://mail.qq.com → 设置 → 账户 → 生成授权码")
-            return False
-        except smtplib.SMTPException as e:
-            print(f"  [X] {mode} 失败: {e}")
-            continue
-        except Exception as e:
-            print(f"  [X] {mode} 异常: {e}")
-            continue
+    # 备用: QQ邮箱 SMTP
+    from_addr = os.environ.get("EMAIL_FROM", "")
+    password = os.environ.get("EMAIL_PASSWORD", "")
+    to_addr = os.environ.get("EMAIL_TO", from_addr)
 
-    print(f"  [X] ❌ 所有方式都失败了，请检查:")
-    print(f"      1. EMAIL_FROM 是否是完整邮箱 (xxx@qq.com)")
-    print(f"      2. EMAIL_PASSWORD 是否是16位授权码（不是登录密码）")
-    print(f"      3. 授权码是否过期（过期需重新生成）")
-    print(f"      4. 是否开启了 QQ邮箱的 SMTP 服务")
+    if from_addr and password and to_addr:
+        print("[*] 使用 QQ邮箱 SMTP 发件...")
+        if send_via_qq_smtp(html_body, text_body, to_addr, from_addr, password):
+            return True
+
+    print("[X] 所有发件方式都失败了")
+    print("    推荐: 注册 SendGrid (免费) → 获取 API Key → 设为 SENDGRID_API_KEY")
     return False
 
 
@@ -443,39 +478,10 @@ def main():
     report = format_report(data)
     print(f"\n{report}\n")
 
-    # 邮件发送模式
     if "--smtp" in sys.argv:
-        from_addr = os.environ.get("EMAIL_FROM", "")
-        password = os.environ.get("EMAIL_PASSWORD", "")
-        to_addr = os.environ.get("EMAIL_TO", from_addr)
-
-        if not from_addr or not password:
-            print("[X] 环境变量 EMAIL_FROM / EMAIL_PASSWORD 未设置")
-            print("     GitHub Actions 中通过 Secrets 设置")
-            sys.exit(1)
-
         print("[*] 准备发送邮件...")
         html_body = build_html_report(data)
-        send_email(report, html_body, to_addr, from_addr, password)
-
-    elif "--email" in sys.argv:
-        idx = sys.argv.index("--email")
-        if idx + 1 < len(sys.argv):
-            to_addr = sys.argv[idx + 1]
-        else:
-            print("[X] --email 需要收件地址参数")
-            sys.exit(1)
-
-        from_addr = os.environ.get("EMAIL_FROM", "")
-        password = os.environ.get("EMAIL_PASSWORD", "")
-
-        if not from_addr or not password:
-            print("[X] 需要设置 EMAIL_FROM 和 EMAIL_PASSWORD 环境变量")
-            sys.exit(1)
-
-        print(f"[*] 发送邮件至 {to_addr}...")
-        html_body = build_html_report(data)
-        send_email(report, html_body, to_addr, from_addr, password)
+        send_email(report, html_body)
 
 
 if __name__ == "__main__":
