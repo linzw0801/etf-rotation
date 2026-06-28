@@ -1,0 +1,25 @@
+name: ETF轮动每日选股
+
+on:
+  schedule:
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  etf-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: 运行选股
+        run: python etf_rotation_cloud.py
+      - name: 输出到 Summary
+        if: always()
+        run: |
+          echo '### ETF轮动选股报告' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          python etf_rotation_cloud.py >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
