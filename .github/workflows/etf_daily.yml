@@ -33,27 +33,23 @@ jobs:
           cat output.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: 通过 SendGrid API 发邮件
+      - name: 发送邮件 (SendGrid)
         if: always()
         env:
           SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           if [ -z "$SENDGRID_API_KEY" ] || [ -z "$EMAIL_TO" ]; then
-            echo "⚠ SendGrid 或收件邮箱未配置，跳过"
+            echo "SendGrid 或收件邮箱未配置，跳过"
             exit 0
           fi
-
-          # 读取报告并转义为 JSON
           TEXT=$(cat output.txt | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
           HTML=$(cat output.txt | python3 -c "
 import sys,json
 text = sys.stdin.read()
-html = text.replace('\n','<br>')
-print(json.dumps(f'<pre style=\"font-family:monospace;background:#f5f5f5;padding:16px;border-radius:8px\">{html}</pre>'))
+html = '<pre>' + text.replace(chr(10),'<br>') + '</pre>'
+print(json.dumps(html))
 ")
-
-          # 调用 SendGrid API
           curl -s -X POST "https://api.sendgrid.com/v3/mail/send" \
             -H "Authorization: Bearer $SENDGRID_API_KEY" \
             -H "Content-Type: application/json" \
@@ -65,4 +61,4 @@ print(json.dumps(f'<pre style=\"font-family:monospace;background:#f5f5f5;padding
                 {\"type\": \"text/plain\", \"value\": $TEXT},
                 {\"type\": \"text/html\", \"value\": $HTML}
               ]
-            }" && echo "✅ SendGrid 发送成功" || echo "❌ SendGrid 发送失败"
+            }" && echo "发送成功" || echo "发送失败"
