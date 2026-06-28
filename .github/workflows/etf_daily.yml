@@ -22,14 +22,47 @@ jobs:
 
       - name: 运行选股器
         id: run_etf
-        env:
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
-          python etf_rotation_cloud.py --smtp
+          python etf_rotation_cloud.py 2>&1 | tee output.txt
 
-      - name: 显示运行结果
+      - name: 写入 GitHub Summary
         if: always()
         run: |
-          echo "✅ Workflow 执行完毕"
+          echo '### ETF轮动选股报告' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: 通过 SendGrid API 发邮件
+        if: always()
+        env:
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: |
+          if [ -z "$SENDGRID_API_KEY" ] || [ -z "$EMAIL_TO" ]; then
+            echo "⚠ SendGrid 或收件邮箱未配置，跳过"
+            exit 0
+          fi
+
+          # 读取报告并转义为 JSON
+          TEXT=$(cat output.txt | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+          HTML=$(cat output.txt | python3 -c "
+import sys,json
+text = sys.stdin.read()
+html = text.replace('\n','<br>')
+print(json.dumps(f'<pre style=\"font-family:monospace;background:#f5f5f5;padding:16px;border-radius:8px\">{html}</pre>'))
+")
+
+          # 调用 SendGrid API
+          curl -s -X POST "https://api.sendgrid.com/v3/mail/send" \
+            -H "Authorization: Bearer $SENDGRID_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"personalizations\": [{\"to\": [{\"email\": \"$EMAIL_TO\"}]}],
+              \"from\": {\"email\": \"$EMAIL_TO\", \"name\": \"ETF轮动选股器\"},
+              \"subject\": \"ETF轮动选股报告 $(date +%m-%d)\",
+              \"content\": [
+                {\"type\": \"text/plain\", \"value\": $TEXT},
+                {\"type\": \"text/html\", \"value\": $HTML}
+              ]
+            }" && echo "✅ SendGrid 发送成功" || echo "❌ SendGrid 发送失败"
