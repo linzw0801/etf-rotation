@@ -13,12 +13,12 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 设置 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
       - name: 运行选股器
         id: run_etf
@@ -27,12 +27,9 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
-          python etf_rotation_cloud.py --smtp 2>&1
+          python etf_rotation_cloud.py --smtp
 
-      - name: 上传运行日志
+      - name: 显示运行结果
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: etf-output
-          path: output.log
-          retention-days: 7
+        run: |
+          echo "✅ Workflow 执行完毕"
