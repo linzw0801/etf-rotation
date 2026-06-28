@@ -1,0 +1,41 @@
+name: ETF轮动每日选股
+
+on:
+  schedule:
+    # 交易日 15:30 CST (07:30 UTC) — A股收盘后运行
+    - cron: '30 7 * * 1-5'
+  # 也支持手动触发 (GitHub网页上点 "Run workflow")
+  workflow_dispatch:
+
+jobs:
+  etf-scan:
+    name: 选股计算并发送邮件
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 运行选股器
+        id: run_etf
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: |
+          python etf_rotation_cloud.py --smtp 2>&1 | tee output.log
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: 上传运行日志 (调试用)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: etf-output
+          path: output.log
+          retention-days: 7
