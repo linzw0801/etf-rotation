@@ -25,7 +25,7 @@ jobs:
         run: |
           python etf_rotation_cloud.py 2>&1 | tee output.txt
 
-      - name: 写入 GitHub Summary
+      - name: 写入 GitHub Step Summary
         if: always()
         run: |
           echo '### ETF轮动选股报告' >> $GITHUB_STEP_SUMMARY
@@ -33,32 +33,76 @@ jobs:
           cat output.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: 发送邮件 (SendGrid)
+      - name: 尝试用 curl 发送邮件
         if: always()
         env:
-          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
-          if [ -z "$SENDGRID_API_KEY" ] || [ -z "$EMAIL_TO" ]; then
-            echo "SendGrid 或收件邮箱未配置，跳过"
+          echo "检查邮箱配置..."
+          if [ -z "$EMAIL_FROM" ] || [ -z "$EMAIL_PASSWORD" ] || [ -z "$EMAIL_TO" ]; then
+            echo "⚠ 邮箱 Secrets 未完全配置，跳过发件"
+            echo "请在 Settings → Secrets → Actions 添加:"
+            echo "  EMAIL_FROM    = 你的QQ邮箱 (xxx@qq.com)"
+            echo "  EMAIL_PASSWORD = QQ邮箱授权码（16位）"
+            echo "  EMAIL_TO      = 收件邮箱"
             exit 0
           fi
-          TEXT=$(cat output.txt | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
-          HTML=$(cat output.txt | python3 -c "
-import sys,json
-text = sys.stdin.read()
-html = '<pre>' + text.replace(chr(10),'<br>') + '</pre>'
-print(json.dumps(html))
-")
-          curl -s -X POST "https://api.sendgrid.com/v3/mail/send" \
-            -H "Authorization: Bearer $SENDGRID_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"personalizations\": [{\"to\": [{\"email\": \"$EMAIL_TO\"}]}],
-              \"from\": {\"email\": \"$EMAIL_TO\", \"name\": \"ETF轮动选股器\"},
-              \"subject\": \"ETF轮动选股报告 $(date +%m-%d)\",
-              \"content\": [
-                {\"type\": \"text/plain\", \"value\": $TEXT},
-                {\"type\": \"text/html\", \"value\": $HTML}
-              ]
-            }" && echo "发送成功" || echo "发送失败"
+
+          echo "发件人: $EMAIL_FROM"
+          echo "收件人: $EMAIL_TO"
+
+          # 读取报告
+          REPORT=$(cat output.txt)
+
+          # 方式1: curl SMTP 发邮件
+          curl --ssl-reqd \
+            --url "smtps://smtp.qq.com:465" \
+            --user "$EMAIL_FROM:$EMAIL_PASSWORD" \
+            --mail-from "$EMAIL_FROM" \
+            --mail-rcpt "$EMAIL_TO" \
+            --upload-file - <<EOF
+From: ETF轮动选股器 <$EMAIL_FROM>
+To: $EMAIL_TO
+Subject: ETF轮动选股报告 $(date +%m-%d)
+Content-Type: text/plain; charset=utf-8
+
+$REPORT
+EOF
+
+          if [ $? -eq 0 ]; then
+            echo "✅ 邮件发送成功!"
+          else
+            echo "❌ curl 方式失败，尝试 Python SMTP..."
+
+            # 方式2: Python SMTP (带 SSL context)
+            python3 -c "
+import smtplib, ssl, os
+from email.mime.text import MIMEText
+from email.header import Header
+
+msg = MIMEText(open('output.txt','r').read(), 'plain', 'utf-8')
+msg['Subject'] = Header('ETF轮动选股报告', 'utf-8')
+msg['From'] = os.environ['EMAIL_FROM']
+msg['To'] = os.environ['EMAIL_TO']
+
+ctx = ssl.create_default_context()
+try:
+    server = smtplib.SMTP_SSL('smtp.qq.com', 465, timeout=30, context=ctx)
+    server.login(os.environ['EMAIL_FROM'], os.environ['EMAIL_PASSWORD'])
+    server.sendmail(os.environ['EMAIL_FROM'], [os.environ['EMAIL_TO']], msg.as_string())
+    server.quit()
+    print('✅ Python SMTP SSL 成功')
+except Exception as e:
+    print(f'❌ Python SMTP 也失败: {e}')
+    print('')
+    print('===== 排查指引 =====')
+    print('1. 去 https://mail.qq.com → 设置 → 账户')
+    print('2. 确保 POP3/SMTP 服务已开启')
+    print('3. 重新生成授权码（16位）')
+    print('4. EMAIL_PASSWORD 填的是授权码，不是登录密码')
+    print('5. 可以试试换 163 邮箱:')
+    print('   SMTP: smtp.163.com 端口 465')
+"
+          fi
