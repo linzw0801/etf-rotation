@@ -77,7 +77,7 @@ def send_feishu(webhook_url, data):
         vol_tag = "✅ 正常"
     lines.append(f"vol20: {data['vol20']:.1f}%  {vol_tag}")
     if data["triggered"]:
-        lines.append(f"仓位: 半仓 {data['best']['name']} + 50% 逆回购")
+        lines.append(f"空仓逆回购")
     else:
         lines.append(f"仓位: 满仓 {data['best']['name']}")
     lines.append("")
@@ -144,7 +144,7 @@ def main():
     print("-"*45)
     print(f"  vol20: {data['vol20']:.1f}%  {'触发' if data['triggered'] else '正常'}")
     if data["triggered"]:
-        print(f"  仓位: 半仓 {data['best']['name']} + 50% 逆回购")
+        print(f"空仓逆回购")
     else:
         print(f"  仓位: 满仓 {data['best']['name']}")
     print("-"*45)
