@@ -14,13 +14,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: 运行选股并发邮件
+      - name: 运行选股并推送到飞书
         env:
-          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        run: python etf_rotation_cloud.py --smtp
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        run: python etf_rotation_cloud.py --feishu
       - name: 输出到 Summary
         if: always()
         run: |
