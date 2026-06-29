@@ -3,7 +3,7 @@
 """
 ETF 轮动选股器 — 云端版 (纯 Python, 无外部依赖)
 """
-import json, math, sys, urllib.request, os
+import json, math, sys, urllib.request, os, argparse
 from datetime import datetime, timezone, timedelta
 
 ETF_LIST = [
@@ -60,6 +60,51 @@ def calc_vol20(all_data):
         vols.append(math.sqrt(v)*math.sqrt(TRADING_DAYS)*100)
     return sum(vols)/len(vols) if vols else 0
 
+def send_feishu(webhook_url, data):
+    """发送 ETF 轮动报告到飞书 Webhook"""
+    lines = []
+    lines.append("📊 ETF轮动选股报告 " + datetime.now(CN_TZ).strftime("%m-%d %H:%M"))
+    lines.append("")
+    for i, r in enumerate(data["results"]):
+        medals = ["🥇", "🥈", "🥉"]
+        icon = medals[i] if i < 3 else "  "
+        sc = f"{r['score']:.4f}" if r.get("valid", True) else "N/A"
+        lines.append(f"{icon} {r['name']:<8} {sc}")
+    lines.append("")
+    if data["triggered"]:
+        vol_tag = "⚠️ 触发风控"
+    else:
+        vol_tag = "✅ 正常"
+    lines.append(f"vol20: {data['vol20']:.1f}%  {vol_tag}")
+    if data["triggered"]:
+        lines.append(f"仓位: 半仓 {data['best']['name']} + 50% 逆回购")
+    else:
+        lines.append(f"仓位: 满仓 {data['best']['name']}")
+    lines.append("")
+    lines.append("明日 09:30 开盘执行")
+    lines.append("若降仓: 14:50 前买 GC001 / R-001")
+
+    text = "\n".join(lines)
+    payload = json.dumps({
+        "msg_type": "text",
+        "content": {"text": text}
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        webhook_url,
+        data=payload,
+        headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            result = resp.read().decode()
+            print(f"[Feishu] 发送结果: {result}")
+            return True
+    except Exception as e:
+        print(f"[Feishu] 发送失败: {e}")
+        return False
+
+
 def run():
     all_data = {}; results = []; newest_date = None
     for etf in ETF_LIST:
@@ -79,6 +124,15 @@ def run():
     return {"results":results,"vol20":vol20,"best":best,"triggered":vol20>=VOL_THRESHOLD,"newest_date":newest_date}
 
 def main():
+    parser = argparse.ArgumentParser(description="ETF轮动选股器")
+    parser.add_argument("--feishu", action="store_true", help="发送结果到飞书 Webhook")
+    args = parser.parse_args()
+
+    webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "")
+    if args.feishu and not webhook_url:
+        print("[错误] 请设置 FEISHU_WEBHOOK_URL 环境变量")
+        sys.exit(1)
+
     print("="*45)
     print("  ETF轮动选股器  "+datetime.now(CN_TZ).strftime("%m-%d %H:%M"))
     print("="*45)
@@ -97,6 +151,12 @@ def main():
     print("  明日 09:30 开盘执行")
     print("  若降仓: 14:50 前买 GC001 / R-001")
     print("="*45)
+
+    # 飞书推送
+    if args.feishu:
+        print("\n--- 发送到飞书 ---")
+        send_feishu(webhook_url, data)
+
 
 if __name__ == "__main__":
     if hasattr(sys.stdout, "reconfigure"):
