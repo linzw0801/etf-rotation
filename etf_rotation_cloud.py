@@ -21,7 +21,7 @@ ETF_LIST = [
 ]
 
 N = 25
-VOL_WINDOW = 21   # 取 21 个 close 算 20 个收益率 (=20 日 VOL)
+VOL_WINDOW = 21
 VOL_THRESHOLD = 35
 TRADING_DAYS = 250
 FETCH_DAYS = 60
@@ -31,7 +31,6 @@ CN_TZ = timezone(timedelta(hours=8))
 
 
 def fetch_klines(code, market, days=FETCH_DAYS):
-    """从东财拉前复权日线 (klt=101 日线, fqt=1 前复权)"""
     secid = f"1.{code}" if market == "sh" else f"0.{code}"
     url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get"
            f"?secid={secid}&fields1=f1,f2,f3"
@@ -69,7 +68,6 @@ def fetch_klines(code, market, days=FETCH_DAYS):
 
 
 def calc_score(closes):
-    """动量得分: (exp(slope*250)-1) * R^2, N=25"""
     c = closes[-N:]
     y = [math.log(x) for x in c]
     x = list(range(N))
@@ -91,7 +89,6 @@ def calc_score(closes):
 
 
 def calc_vol20(all_data):
-    """4 ETF 等权平均 20 日年化波动率 (对数收益率, STD ddof=0, √250)"""
     vols = []
     details = []
     for code in VOL_CORE_CODES:
@@ -111,7 +108,6 @@ def calc_vol20(all_data):
 
 
 def send_feishu(webhook_url, data):
-    """发送 ETF 轮动报告到飞书 Webhook"""
     lines = []
     lines.append("📊 ETF轮动选股报告 " + datetime.now(CN_TZ).strftime("%m-%d %H:%M"))
     lines.append("")
@@ -119,17 +115,16 @@ def send_feishu(webhook_url, data):
         medals = ["🥇", "🥈", "🥉"]
         icon = medals[i] if i < 3 else "  "
         sc = f"{r['score']:.4f}" if r.get("valid", True) else "N/A"
-        lines.append(f"{icon} {r['name']:<8} {sc}")
+        lines.append(f"{icon} {r['name']} {sc}")
+    lines.append("")
+    lines.append(f"vol20 均值: {data['vol20']:.2f}%  阈值 {VOL_THRESHOLD}%")
+    for name, v in data.get("vol_details", []):
+        lines.append(f"  · {name} {v:.2f}%")
     lines.append("")
     if data["triggered"]:
-        vol_tag = "⚠️ 触发风控"
+        lines.append("⚠️ 触发风控: 清仓 ETF → 全仓 GC001/R-001")
     else:
-        vol_tag = "✅ 正常"
-    lines.append(f"vol20: {data['vol20']:.1f}%  {vol_tag}")
-    if data["triggered"]:
-        lines.append("动作: 清仓 ETF → 全仓 GC001/R-001")
-    else:
-        lines.append(f"仓位: 满仓 {data['best']['name']}")
+        lines.append(f"✅ 仓位: 满仓 {data['best']['name']}  (距离阈值 {data['vol20']-VOL_THRESHOLD:+.2f}pp)")
     lines.append("")
     lines.append("明日 09:30 开盘执行")
     lines.append("触发: 14:50 前买 GC001 / R-001")
