@@ -99,9 +99,9 @@ def calc_vol20(all_data):
         if not d or len(d) < VOL_WINDOW:
             continue
         p = [float(x["close"]) for x in d[-VOL_WINDOW:]]
-        r = [math.log(p[i] / p[i - 1]) for i in range(1, len(p))]   # 对数收益率
+        r = [math.log(p[i] / p[i - 1]) for i in range(1, len(p))]
         m = sum(r) / len(r)
-        v = sum((ri - m) ** 2 for ri in r) / len(r)                 # ddof=0
+        v = sum((ri - m) ** 2 for ri in r) / len(r)
         vol = math.sqrt(v) * math.sqrt(TRADING_DAYS) * 100
         vols.append(vol)
         name = next(e["name"] for e in ETF_LIST if e["code"] == code)
