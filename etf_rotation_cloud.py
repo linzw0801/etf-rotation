@@ -129,6 +129,7 @@ def send_feishu(webhook_url, data):
     lines.append("明日 09:30 开盘执行")
     lines.append("触发: 14:50 前买 GC001 / R-001")
     lines.append("国庆节后两天内强制逆回购")
+    lines.append("2+标的>0.35 OR 均>0.35")
 
     text = "\n".join(lines)
     payload = json.dumps({
